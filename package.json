@@ -1,5 +1,5 @@
 {
-  "name": "mcp-hello-world",
+  "name": "mock-customer",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -7,6 +7,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
-    "express": "latest"
+    "express": "latest",
+    "express-session": "latest"
   }
 }
