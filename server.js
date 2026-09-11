@@ -14,13 +14,13 @@ app.use(express.json());
 // 2. Configure session cookies for Render's HTTPS environment
 app.use(
   session({
-    secret: "mock-screenful-secret-key",
+    secret: "mock-customer-secret-key",
     resave: false,
     saveUninitialized: false,
     cookie: { 
-      maxAge: 3600000,
-      secure: process.env.NODE_ENV === "production", // Enable secure cookies in production
-      sameSite: "lax"
+      maxAge: 3600000, 
+      secure: true,        // Required on Render (HTTPS)
+      sameSite: "none"     // Crucial for OAuth popup redirects!
     }
   })
 );
