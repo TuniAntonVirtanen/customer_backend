@@ -38,15 +38,21 @@ const MOCK_USER = {
 
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
   const hostUrl = `${req.protocol}://${req.get("host")}`;
-  console.log(`[BACKEND OAUTH METADATA] Discovery requested. Issuer: ${hostUrl}`);
   res.json({
     issuer: hostUrl,
     authorization_endpoint: `${hostUrl}/oauth/authorize`,
     token_endpoint: `${hostUrl}/oauth/token`,
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
-    code_challenge_methods_supported: ["S256"]
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+    scopes_supported: ["read", "write"]
   });
+});
+
+// Also alias OpenID discovery since ChatGPT tried fetching it in logs
+app.get("/.well-known/openid-configuration", (req, res) => {
+  res.redirect("/.well-known/oauth-authorization-server");
 });
 
 app.get("/", (req, res) => {
@@ -153,22 +159,23 @@ app.get("/oauth/authorize", (req, res) => {
   res.send(`Authorization Granted! Code: ${mockAuthCode}`);
 });
 
-app.post("/oauth/token", (req, res) => {
-  console.log(`[BACKEND TOKEN] Payload received:`, req.body);
-  const { code, grant_type, client_id, client_secret, code_verifier } = req.body;
+app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
+  console.log("[BACKEND TOKEN REQ BODY]:", req.body);
+  const { code, grant_type } = req.body;
 
-  if (grant_type === "authorization_code" && code && code.startsWith("auth_code_")) {
-    console.log(`[BACKEND TOKEN SUCCESS] Valid code "${code}". Issuing token.`);
+  if (grant_type === "authorization_code" && code) {
+    console.log("[BACKEND TOKEN SUCCESS] Issuing bearer token.");
     return res.json({
       access_token: "mock_access_token_9999",
       token_type: "Bearer",
       expires_in: 3600
     });
   }
-
   console.warn(`[BACKEND TOKEN REJECTED] Invalid code or grant_type. Code: "${code}", Grant: "${grant_type}"`);
   res.status(400).json({ error: "invalid_grant" });
 });
+  
+
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
