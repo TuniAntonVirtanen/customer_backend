@@ -123,16 +123,13 @@ app.post("/logout", (req, res) => {
 });
 
 // ===========================================================================
-// 2. OAUTH / MCP BRIDGE ENDPOINTS (What the LLM flow will hit)
+// 2. OAUTH / MCP BRIDGE ENDPOINTS
 // ===========================================================================
 
-// OAuth Authorization Endpoint
-// The LLM client pops open a browser window to this endpoint
 app.get("/oauth/authorize", (req, res) => {
-  const redirectUri = req.query.redirect_uri;
+  const { redirect_uri, state, code_challenge } = req.query;
 
   if (!req.session || !req.session.isLoggedIn) {
-    // Save full original URL with query params (redirect_uri, state, code_challenge)
     req.session.returnTo = req.originalUrl; 
     return req.session.save(() => {
       res.redirect("/");
@@ -141,21 +138,22 @@ app.get("/oauth/authorize", (req, res) => {
 
   const mockAuthCode = "auth_code_" + Math.random().toString(36).substring(2, 10);
 
-  // If redirectUri exists (sent by ChatGPT), redirect back to ChatGPT with code AND original state!
-  if (redirectUri) {
-    const stateParam = req.query.state ? `&state=${encodeURIComponent(req.query.state)}` : "";
-    return res.redirect(`${redirectUri}?code=${mockAuthCode}${stateParam}`);
+  if (redirect_uri) {
+    const redirectUrl = new URL(redirect_uri);
+    redirectUrl.searchParams.set("code", mockAuthCode);
+    if (state) redirectUrl.searchParams.set("state", state);
+    
+    return res.redirect(redirectUrl.toString());
   }
 
   res.send(`Authorization Granted! Code: ${mockAuthCode}`);
 });
 
-// Token Exchange Endpoint
-// The MCP server calls this in the background to swap the authorization code for an Access Token
+// Token Exchange Endpoint with basic PKCE compliance
 app.post("/oauth/token", (req, res) => {
-  const { code } = req.body;
+  const { code, grant_type } = req.body;
 
-  if (code && code.startsWith("auth_code_")) {
+  if (grant_type === "authorization_code" && code && code.startsWith("auth_code_")) {
     return res.json({
       access_token: "mock_access_token_9999",
       token_type: "Bearer",
