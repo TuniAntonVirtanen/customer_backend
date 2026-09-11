@@ -131,27 +131,23 @@ app.post("/logout", (req, res) => {
 app.get("/oauth/authorize", (req, res) => {
   const redirectUri = req.query.redirect_uri;
 
-  // Step A: If user is NOT logged in, save where they were going and force login
-  if (!req.session.isLoggedIn) {
-    req.session.returnTo = req.originalUrl;
-    return res.redirect("/");
+  if (!req.session || !req.session.isLoggedIn) {
+    // Save full original URL with query params (redirect_uri, state, code_challenge)
+    req.session.returnTo = req.originalUrl; 
+    return req.session.save(() => {
+      res.redirect("/");
+    });
   }
 
-  // Step B: User IS logged in! Generate an authorization code
   const mockAuthCode = "auth_code_" + Math.random().toString(36).substring(2, 10);
 
-  // If a redirect URI was provided (standard OAuth), send them back to the client
+  // If redirectUri exists (sent by ChatGPT), redirect back to ChatGPT with code AND original state!
   if (redirectUri) {
-    return res.redirect(`${redirectUri}?code=${mockAuthCode}`);
+    const stateParam = req.query.state ? `&state=${encodeURIComponent(req.query.state)}` : "";
+    return res.redirect(`${redirectUri}?code=${mockAuthCode}${stateParam}`);
   }
 
-  // Fallback for manual testing: Show the token/code on screen
-  res.send(`
-    <div style="font-family: sans-serif; padding: 20px;">
-      <h3>Authorization Granted! ✅</h3>
-      <p>Issued Authorization Code: <code>${mockAuthCode}</code></p>
-    </div>
-  `);
+  res.send(`Authorization Granted! Code: ${mockAuthCode}`);
 });
 
 // Token Exchange Endpoint
