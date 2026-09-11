@@ -151,8 +151,11 @@ app.get("/oauth/authorize", (req, res) => {
     redirectUrl.searchParams.set("code", mockAuthCode);
     if (state) redirectUrl.searchParams.set("state", state);
     
+    // Explicitly send issuer back to pass RFC 9207 validation
+    const hostUrl = `${req.protocol}://${req.get("host")}`;
+    redirectUrl.searchParams.set("iss", hostUrl);
+    
     const finalRedirect = redirectUrl.toString();
-    console.log(`[BACKEND AUTHORIZE REDIRECT] Redirecting LLM client back to: ${finalRedirect}`);
     return res.redirect(finalRedirect);
   }
 
