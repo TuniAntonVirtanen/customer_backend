@@ -25,20 +25,6 @@ app.use(
   })
 );
 
-// Parse form submissions and JSON
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-
-// Set up browser sessions (Required for web login state)
-app.use(
-  session({
-    secret: "mock-customer-secret-key",
-    resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 60 } // 1 hour session
-  })
-);
-
 // Hardcoded user credentials for testing
 const MOCK_USER = {
   username: "user",
