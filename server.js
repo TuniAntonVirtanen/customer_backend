@@ -49,6 +49,19 @@ const MOCK_USER = {
 // 1. WEB APP ROUTES (For humans accessing in a browser)
 // ===========================================================================
 
+// To pass MCP auth
+app.get("/.well-known/oauth-authorization-server", (req, res) => {
+  const hostUrl = `${req.protocol}://${req.get("host")}`;
+  res.json({
+    issuer: hostUrl,
+    authorization_endpoint: `${hostUrl}/oauth/authorize`,
+    token_endpoint: `${hostUrl}/oauth/token`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code"],
+    code_challenge_methods_supported: ["S256"]
+  });
+});
+
 // Home Page: Displays login form or logged-in status
 app.get("/", (req, res) => {
   if (req.session.isLoggedIn) {
