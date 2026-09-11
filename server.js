@@ -3,6 +3,10 @@ import session from "express-session";
 
 const app = express();
 
+// FOR DEVELOPMENT AND CIRCUMVENT IFFY DEPLOYMENT
+// 1. Tell Express it is sitting behind Render's HTTPS proxy
+app.set("trust proxy", 1);
+
 // Parse form submissions and JSON
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
