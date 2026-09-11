@@ -5,7 +5,25 @@ const app = express();
 
 // FOR DEVELOPMENT AND CIRCUMVENT IFFY DEPLOYMENT
 // 1. Tell Express it is sitting behind Render's HTTPS proxy
+// 1. Tell Express it is sitting behind Render's HTTPS proxy
 app.set("trust proxy", 1);
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// 2. Configure session cookies for Render's HTTPS environment
+app.use(
+  session({
+    secret: "mock-screenful-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+      maxAge: 3600000,
+      secure: process.env.NODE_ENV === "production", // Enable secure cookies in production
+      sameSite: "lax"
+    }
+  })
+);
 
 // Parse form submissions and JSON
 app.use(express.urlencoded({ extended: true }));
