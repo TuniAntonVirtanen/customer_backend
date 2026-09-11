@@ -3,15 +3,17 @@ import session from "express-session";
 
 const app = express();
 
-// FOR DEVELOPMENT AND CIRCUMVENT IFFY DEPLOYMENT
-// 1. Tell Express it is sitting behind Render's HTTPS proxy
-// 1. Tell Express it is sitting behind Render's HTTPS proxy
 app.set("trust proxy", 1);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// 2. Configure session cookies for Render's HTTPS environment
+// Global Request Logger
+app.use((req, res, next) => {
+  console.log(`[BACKEND REQ] ${req.method} ${req.url}`);
+  next();
+});
+
 app.use(
   session({
     secret: "mock-customer-secret-key",
@@ -19,25 +21,24 @@ app.use(
     saveUninitialized: false,
     cookie: { 
       maxAge: 3600000, 
-      secure: true,        // Required on Render (HTTPS)
-      sameSite: "none"     // Crucial for OAuth popup redirects!
+      secure: true,        
+      sameSite: "none"     
     }
   })
 );
 
-// Hardcoded user credentials for testing
 const MOCK_USER = {
   username: "user",
   password: "password"
 };
 
 // ===========================================================================
-// 1. WEB APP ROUTES (For humans accessing in a browser)
+// 1. WEB APP ROUTES
 // ===========================================================================
 
-// To pass MCP auth
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
   const hostUrl = `${req.protocol}://${req.get("host")}`;
+  console.log(`[BACKEND OAUTH METADATA] Discovery requested. Issuer: ${hostUrl}`);
   res.json({
     issuer: hostUrl,
     authorization_endpoint: `${hostUrl}/oauth/authorize`,
@@ -48,8 +49,8 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
   });
 });
 
-// Home Page: Displays login form or logged-in status
 app.get("/", (req, res) => {
+  console.log(`[BACKEND ROOT] Session ID: ${req.sessionID}, LoggedIn: ${!!req.session?.isLoggedIn}`);
   if (req.session.isLoggedIn) {
     return res.send(`
       <div style="font-family: sans-serif; padding: 20px;">
@@ -81,28 +82,33 @@ app.get("/", (req, res) => {
   `);
 });
 
-// Login POST Handler
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
+  console.log(`[BACKEND LOGIN] Attempt for username: "${username}"`);
 
   if (username === MOCK_USER.username && password === MOCK_USER.password) {
     req.session.isLoggedIn = true;
     req.session.username = username;
 
-    // Check if user was sent here from an OAuth flow (e.g. from an LLM prompt)
     const redirectTo = req.session.returnTo || "/";
+    console.log(`[BACKEND LOGIN SUCCESS] Redirecting to: ${redirectTo}`);
     delete req.session.returnTo;
-    return res.redirect(redirectTo);
+    
+    return req.session.save((err) => {
+      if (err) console.error(`[BACKEND LOGIN ERROR] Session save failed:`, err);
+      res.redirect(redirectTo);
+    });
   }
 
+  console.warn(`[BACKEND LOGIN FAILED] Invalid credentials for: "${username}"`);
   res.status(401).send(`
     <h3>Invalid Credentials ❌</h3>
     <a href="/">Try Again</a>
   `);
 });
 
-// Logout POST Handler
 app.post("/logout", (req, res) => {
+  console.log(`[BACKEND LOGOUT] User logged out.`);
   req.session.destroy(() => {
     res.redirect("/");
   });
@@ -113,33 +119,46 @@ app.post("/logout", (req, res) => {
 // ===========================================================================
 
 app.get("/oauth/authorize", (req, res) => {
-  const { redirect_uri, state, code_challenge } = req.query;
+  const { redirect_uri, state, code_challenge, client_id } = req.query;
+  console.log(`[BACKEND AUTHORIZE] Received Auth Request:`, {
+    client_id,
+    redirect_uri,
+    state,
+    code_challenge,
+    isLoggedIn: !!req.session?.isLoggedIn
+  });
 
   if (!req.session || !req.session.isLoggedIn) {
+    console.log(`[BACKEND AUTHORIZE] Unauthenticated. Storing returnTo: ${req.originalUrl}`);
     req.session.returnTo = req.originalUrl; 
-    return req.session.save(() => {
+    return req.session.save((err) => {
+      if (err) console.error(`[BACKEND AUTHORIZE ERROR] Session save failed:`, err);
       res.redirect("/");
     });
   }
 
   const mockAuthCode = "auth_code_" + Math.random().toString(36).substring(2, 10);
+  console.log(`[BACKEND AUTHORIZE SUCCESS] Generated code: ${mockAuthCode}`);
 
   if (redirect_uri) {
     const redirectUrl = new URL(redirect_uri);
     redirectUrl.searchParams.set("code", mockAuthCode);
     if (state) redirectUrl.searchParams.set("state", state);
     
-    return res.redirect(redirectUrl.toString());
+    const finalRedirect = redirectUrl.toString();
+    console.log(`[BACKEND AUTHORIZE REDIRECT] Redirecting LLM client back to: ${finalRedirect}`);
+    return res.redirect(finalRedirect);
   }
 
   res.send(`Authorization Granted! Code: ${mockAuthCode}`);
 });
 
-// Token Exchange Endpoint with basic PKCE compliance
 app.post("/oauth/token", (req, res) => {
-  const { code, grant_type } = req.body;
+  console.log(`[BACKEND TOKEN] Payload received:`, req.body);
+  const { code, grant_type, client_id, client_secret, code_verifier } = req.body;
 
   if (grant_type === "authorization_code" && code && code.startsWith("auth_code_")) {
+    console.log(`[BACKEND TOKEN SUCCESS] Valid code "${code}". Issuing token.`);
     return res.json({
       access_token: "mock_access_token_9999",
       token_type: "Bearer",
@@ -147,12 +166,10 @@ app.post("/oauth/token", (req, res) => {
     });
   }
 
+  console.warn(`[BACKEND TOKEN REJECTED] Invalid code or grant_type. Code: "${code}", Grant: "${grant_type}"`);
   res.status(400).json({ error: "invalid_grant" });
 });
 
-// ===========================================================================
-// SERVER START
-// ===========================================================================
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Mock Customer Server running on http://localhost:${port}`);
