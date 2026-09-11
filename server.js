@@ -42,6 +42,7 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
     issuer: hostUrl,
     authorization_endpoint: `${hostUrl}/oauth/authorize`,
     token_endpoint: `${hostUrl}/oauth/token`,
+    registration_endpoint: `${hostUrl}/oauth/register`, // <-- ADD THIS
     response_types_supported: ["code"],
     grant_types_supported: ["authorization_code"],
     code_challenge_methods_supported: ["S256"],
@@ -177,7 +178,30 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
   console.warn(`[BACKEND TOKEN REJECTED] Invalid code or grant_type. Code: "${code}", Grant: "${grant_type}"`);
   res.status(400).json({ error: "invalid_grant" });
 });
+
+
+// Getting desperate
+app.post("/oauth/register", (req, res) => {
+  console.log("[BACKEND REGISTER REQ]", req.body);
+  const { redirect_uris, client_name } = req.body;
+
+  res.status(201).json({
+    client_id: "test", // or dynamically generated ID
+    client_secret: "mock_client_secret_12345",
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    client_secret_expires_at: 0,
+    redirect_uris: redirect_uris || ["https://chatgpt.com/connector/oauth"],
+    grant_types: ["authorization_code"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none"
+  });
+});
   
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  next();
+});
 
 
 const port = process.env.PORT || 4000;
