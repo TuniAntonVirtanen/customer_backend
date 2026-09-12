@@ -229,3 +229,39 @@ const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`Mock Customer Server running on http://localhost:${port}`);
 });
+
+
+// Add this route anywhere in customer-backend.js
+
+app.get("/widget/bar-chart", (req, res) => {
+  const chartData = MOCK_DATA.workspace2;
+  const maxVal = Math.max(...Object.values(chartData));
+
+  const bars = Object.entries(chartData).map(([label, val]) => {
+    const heightPercent = (val / maxVal) * 100;
+    return `
+      <div style="display: flex; flex-direction: column; align-items: center; width: 40px;">
+        <div style="font-size: 12px; margin-bottom: 4px;">${val}</div>
+        <div style="width: 100%; height: ${heightPercent}%; background-color: #4A90E2; border-radius: 4px 4px 0 0;"></div>
+        <div style="font-weight: bold; margin-top: 8px;">${label}</div>
+      </div>
+    `;
+  }).join("");
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f9f9f9; }
+        .chart-container { display: flex; align-items: flex-end; gap: 20px; height: 150px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+      </style>
+    </head>
+    <body>
+      <div class="chart-container">
+        ${bars}
+      </div>
+    </body>
+    </html>
+  `);
+});
