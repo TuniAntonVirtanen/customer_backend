@@ -33,6 +33,9 @@ const MOCK_USER = {
   password: "password"
 };
 
+// ===========================================================================
+// SINGLE SOURCE OF TRUTH (DATA)
+// ===========================================================================
 const MOCK_DATA = {
   workspace1: { completedTasks: 12, inProgressTasks: 3 },
   workspace2: { A: 5, B: 7, C: 3 },
@@ -56,7 +59,6 @@ const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" }
 });
 
-// Export key details for JWKS
 const keyObject = crypto.createPublicKey(publicKey);
 const jwk = keyObject.export({ format: "jwk" });
 jwk.use = "sig";
@@ -64,10 +66,9 @@ jwk.alg = "RS256";
 jwk.kid = "prototype-key-1";
 
 // ===========================================================================
-// 1. WEB APP & DISCOVERY ROUTES
+// 1. WEB APP ROUTES & DISCOVERY
 // ===========================================================================
 
-// JWKS Endpoint so MCP Backend can fetch public keys dynamically
 app.get("/.well-known/jwks.json", (req, res) => {
   res.json({ keys: [jwk] });
 });
@@ -93,13 +94,42 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 });
 
 app.get("/", (req, res) => {
+  console.log(`[BACKEND ROOT] Session ID: ${req.sessionID}, LoggedIn: ${!!req.session?.isLoggedIn}`);
+  
   if (req.session.isLoggedIn) {
+    const ws1Text = `Active Sprint: ${MOCK_DATA.workspace1.completedTasks} completed tasks, ${MOCK_DATA.workspace1.inProgressTasks} in progress`;
+    const ws2Chart = Object.entries(MOCK_DATA.workspace2)
+      .map(([k, v]) => `<div><strong>${k}:</strong> ${"█".repeat(v)} (${v})</div>`)
+      .join("");
+    const ws3Text = MOCK_DATA.workspace3
+      .map(([from, to]) => `${from} -> ${to}`)
+      .join(", ");
+
     return res.send(`
       <div style="font-family: sans-serif; padding: 20px;">
-        <h2>Welcome to Customer Dashboard 🎉</h2>
+        <h2>Welcome to Mock Customer Dashboard 🎉</h2>
         <p>Logged in as: <strong>${req.session.username}</strong></p>
+        
+        <hr style="margin: 20px 0;">
+
+        <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+          <h3>Workspace 1</h3>
+          <p>${ws1Text}</p>
+        </div>
+
+        <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+          <h3>Workspace 2</h3>
+          ${ws2Chart}
+        </div>
+
+        <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
+          <h3>Workspace 3</h3>
+          <p>${ws3Text}</p>
+        </div>
+
+        <br>
         <form action="/logout" method="POST">
-          <button type="submit">Log Out</button>
+          <button type="submit" style="padding: 8px 16px;">Log Out</button>
         </form>
       </div>
     `);
@@ -108,12 +138,18 @@ app.get("/", (req, res) => {
   res.send(`
     <div style="font-family: sans-serif; padding: 20px;">
       <h2>Mock Customer Login</h2>
-      <form action="/login" method="POST">
-        <label>Username:</label> <input type="text" name="username" required /><br><br>
-        <label>Password:</label> <input type="password" name="password" required /><br><br>
-        <button type="submit">Log In</button>
+      <form action="/login" method="POST" style="display: inline-block; text-align: left;">
+        <div>
+          <label>Username:</label><br>
+          <input type="text" name="username" required style="padding: 5px;" />
+        </div><br>
+        <div>
+          <label>Password:</label><br>
+          <input type="password" name="password" required style="padding: 5px;" />
+        </div><br>
+        <button type="submit" style="padding: 8px 16px;">Log In</button>
       </form>
-      <p><small>Use <code>user</code> / <code>password</code></small></p>
+      <p><small>Use <code>user</code> / <code>password</code> to log in.</small></p>
     </div>
   `);
 });
@@ -126,13 +162,17 @@ app.post("/login", (req, res) => {
 
     const redirectTo = req.session.returnTo || "/";
     delete req.session.returnTo;
-
+    
     return req.session.save((err) => {
-      if (err) console.error(`[BACKEND LOGIN ERROR]`, err);
+      if (err) console.error(`[BACKEND LOGIN ERROR] Session save failed:`, err);
       res.redirect(redirectTo);
     });
   }
-  res.status(401).send("Invalid Credentials");
+
+  res.status(401).send(`
+    <h3>Invalid Credentials ❌</h3>
+    <a href="/">Try Again</a>
+  `);
 });
 
 app.post("/logout", (req, res) => {
@@ -140,7 +180,7 @@ app.post("/logout", (req, res) => {
 });
 
 // ===========================================================================
-// 2. DATA API (CONSUMED BY MCP BACKEND)
+// 2. DATA API (FOR MCP BACKEND CONSUMPTION)
 // ===========================================================================
 
 app.get("/api/data", (req, res) => {
@@ -151,19 +191,52 @@ app.get("/api/data", (req, res) => {
 
   const token = authHeader.split(" ")[1];
   try {
-    // PROD NOTE: For internal calls, verify signed JWT directly
-    const decoded = jwt.verify(token, publicKey, { algorithms: ["RS256"] });
+    // PROD NOTE: Verify signed RS256 JWT
+    jwt.verify(token, publicKey, { algorithms: ["RS256"] });
     res.json(MOCK_DATA);
   } catch (err) {
     return res.status(403).json({ error: "invalid_token", message: err.message });
   }
 });
 
+// Visual widget route
+app.get("/widget/bar-chart", (req, res) => {
+  const chartData = MOCK_DATA.workspace2;
+  const maxVal = Math.max(...Object.values(chartData));
+
+  const bars = Object.entries(chartData).map(([label, val]) => {
+    const heightPercent = (val / maxVal) * 100;
+    return `
+      <div style="display: flex; flex-direction: column; align-items: center; width: 40px;">
+        <div style="font-size: 12px; margin-bottom: 4px;">${val}</div>
+        <div style="width: 100%; height: ${heightPercent}%; background-color: #4A90E2; border-radius: 4px 4px 0 0;"></div>
+        <div style="font-weight: bold; margin-top: 8px;">${label}</div>
+      </div>
+    `;
+  }).join("");
+
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f9f9f9; }
+        .chart-container { display: flex; align-items: flex-end; gap: 20px; height: 150px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+      </style>
+    </head>
+    <body>
+      <div class="chart-container">
+        ${bars}
+      </div>
+    </body>
+    </html>
+  `);
+});
+
 // ===========================================================================
-// 3. OAUTH 2.1 ENDPOINTS
+// 3. OAUTH / MCP BRIDGE ENDPOINTS
 // ===========================================================================
 
-// Dynamic Client Registration (RFC 7591)
 app.post("/oauth/register", (req, res) => {
   const { redirect_uris } = req.body;
   const clientId = "client_" + crypto.randomBytes(8).toString("hex");
@@ -171,56 +244,55 @@ app.post("/oauth/register", (req, res) => {
   const clientMetadata = {
     client_id: clientId,
     client_id_issued_at: Math.floor(Date.now() / 1000),
-    redirect_uris: redirect_uris || [],
+    redirect_uris: redirect_uris || ["https://chatgpt.com/connector/oauth"],
     grant_types: ["authorization_code"],
     response_types: ["code"],
-    token_endpoint_auth_method: "none" // Public Client (PKCE required)
+    token_endpoint_auth_method: "none"
   };
 
   registeredClients.set(clientId, clientMetadata);
   res.status(201).json(clientMetadata);
 });
 
-// Authorization Endpoint with PKCE
 app.get("/oauth/authorize", (req, res) => {
   const { client_id, redirect_uri, state, code_challenge, code_challenge_method } = req.query;
 
-  // 1. Force Login First
   if (!req.session || !req.session.isLoggedIn) {
-    req.session.returnTo = req.originalUrl;
-    return req.session.save(() => res.redirect("/"));
+    req.session.returnTo = req.originalUrl; 
+    return req.session.save((err) => {
+      if (err) console.error(`[BACKEND AUTHORIZE ERROR] Session save failed:`, err);
+      res.redirect("/");
+    });
   }
 
-  // 2. Strict PKCE Verification Check
+  // PKCE Check
   if (!code_challenge || code_challenge_method !== "S256") {
     return res.status(400).send("OAuth 2.1 requires PKCE with S256 code_challenge_method.");
   }
 
-  // PROD NOTE: Validate redirect_uri matches client's registered redirect_uris here.
-
-  // 3. Issue Authorization Code
-  const mockAuthCode = "code_" + crypto.randomBytes(16).toString("hex");
+  const mockAuthCode = "auth_code_" + crypto.randomBytes(12).toString("hex");
   authorizationCodes.set(mockAuthCode, {
     clientId: client_id,
     redirectUri: redirect_uri,
     codeChallenge: code_challenge,
     username: req.session.username,
-    expiresAt: Date.now() + 10 * 60 * 1000 // 10 minutes
+    expiresAt: Date.now() + 10 * 60 * 1000
   });
 
-  // 4. Redirect Back to Client
   if (redirect_uri) {
     const redirectUrl = new URL(redirect_uri);
     redirectUrl.searchParams.set("code", mockAuthCode);
     if (state) redirectUrl.searchParams.set("state", state);
-    redirectUrl.searchParams.set("iss", `${req.protocol}://${req.get("host")}`);
+    
+    const hostUrl = `${req.protocol}://${req.get("host")}`;
+    redirectUrl.searchParams.set("iss", hostUrl);
+    
     return res.redirect(redirectUrl.toString());
   }
 
   res.send(`Authorization Granted! Code: ${mockAuthCode}`);
 });
 
-// Token Endpoint (PKCE Verification & Signed JWT Issue)
 app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
   const { code, grant_type, code_verifier, client_id } = req.body;
 
@@ -234,10 +306,9 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
     return res.status(400).json({ error: "invalid_grant", error_description: "Code invalid or expired" });
   }
 
-  // PROD NOTE: Ensure code single-use lifetime
   authorizationCodes.delete(code);
 
-  // Validate PKCE (Base64URL(SHA256(code_verifier)) == code_challenge)
+  // PKCE Validation
   const calculatedChallenge = crypto
     .createHash("sha256")
     .update(code_verifier)
@@ -267,12 +338,17 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
   res.json({
     access_token: accessToken,
     token_type: "Bearer",
-    expires_in: 3600,
-    scope: "read write"
+    expires_in: 3600
   });
+});
+
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+  next();
 });
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
-  console.log(`Customer Server running on http://localhost:${port}`);
+  console.log(`Mock Customer Server running on http://localhost:${port}`);
 });
