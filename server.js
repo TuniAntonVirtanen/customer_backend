@@ -37,7 +37,7 @@ const MOCK_USER = {
 const MOCK_DATA = {
   workspace1: { completedTasks: 12, inProgressTasks: 3 },
   workspace2: { A: 5, B: 7, C: 3 },
-  workspace3: ["D", "A", "C", "B"]
+  workspace3: [["D", "A"], ["A", "C"], ["B", "C"], ["D", "C"]]
 };
 
 // ===========================================================================
@@ -71,7 +71,9 @@ app.get("/", (req, res) => {
     const ws2Chart = Object.entries(MOCK_DATA.workspace2)
       .map(([k, v]) => `<div><strong>${k}:</strong> ${"█".repeat(v)} (${v})</div>`)
       .join("");
-    const ws3Text = MOCK_DATA.workspace3.join(" -> ");
+    const ws3Text = MOCK_DATA.workspace3
+      .map(([from, to]) => `${from} -> ${to}`)
+      .join(", ");
 
     return res.send(`
       <div style="font-family: sans-serif; padding: 20px;">
