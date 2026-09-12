@@ -20,10 +20,10 @@ app.use(
     secret: "mock-customer-secret-key",
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-      maxAge: 3600000, 
-      secure: true,       
-      sameSite: "none"     
+    cookie: {
+      maxAge: 3600000,
+      secure: true,
+      sameSite: "none"
     }
   })
 );
@@ -47,7 +47,7 @@ const MOCK_DATA = {
 // PROD NOTE: Replace these Map() instances with PostgreSQL/Redis.
 // ===========================================================================
 const registeredClients = new Map(); // client_id -> client metadata
-const authorizationCodes = new Map(); // code -> auth state (code_challenge, userId, etc.)
+const authorizationCodes = new Map(); // code -> auth state (code_challenge, userId, resource, etc.)
 
 // ===========================================================================
 // CRYPTOGRAPHIC KEYS (RS256)
@@ -95,7 +95,7 @@ app.get("/.well-known/openid-configuration", (req, res) => {
 
 app.get("/", (req, res) => {
   console.log(`[BACKEND ROOT] Session ID: ${req.sessionID}, LoggedIn: ${!!req.session?.isLoggedIn}`);
-  
+
   if (req.session.isLoggedIn) {
     const ws1Text = `Active Sprint: ${MOCK_DATA.workspace1.completedTasks} completed tasks, ${MOCK_DATA.workspace1.inProgressTasks} in progress`;
     const ws2Chart = Object.entries(MOCK_DATA.workspace2)
@@ -109,7 +109,7 @@ app.get("/", (req, res) => {
       <div style="font-family: sans-serif; padding: 20px;">
         <h2>Welcome to Mock Customer Dashboard 🎉</h2>
         <p>Logged in as: <strong>${req.session.username}</strong></p>
-        
+
         <hr style="margin: 20px 0;">
 
         <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; border-radius: 4px;">
@@ -162,7 +162,7 @@ app.post("/login", (req, res) => {
 
     const redirectTo = req.session.returnTo || "/";
     delete req.session.returnTo;
-    
+
     return req.session.save((err) => {
       if (err) console.error(`[BACKEND LOGIN ERROR] Session save failed:`, err);
       res.redirect(redirectTo);
@@ -192,6 +192,10 @@ app.get("/api/data", (req, res) => {
   const token = authHeader.split(" ")[1];
   try {
     // PROD NOTE: Verify signed RS256 JWT
+    // NOTE: This endpoint is only ever called internally by mcp-backend, which
+    // forwards a token whose `aud` is the mcp-app resource (see /oauth/token below).
+    // It intentionally does not re-check `aud` here, since that binding is enforced
+    // at mcp-app (the actual protected resource) and again at mcp-backend.
     jwt.verify(token, publicKey, { algorithms: ["RS256"] });
     res.json(MOCK_DATA);
   } catch (err) {
@@ -255,10 +259,52 @@ app.post("/oauth/register", (req, res) => {
 });
 
 app.get("/oauth/authorize", (req, res) => {
-  const { client_id, redirect_uri, state, code_challenge, code_challenge_method } = req.query;
+  const { client_id, redirect_uri, state, code_challenge, code_challenge_method, resource } = req.query;
+
+  // ---------------------------------------------------------------------
+  // Enforce dynamic client registration: previously any client_id/redirect_uri
+  // was accepted regardless of what /oauth/register had stored. Now the
+  // authorize request must reference a client that actually registered, and
+  // the redirect_uri must be one that client registered.
+  // ---------------------------------------------------------------------
+  const client = registeredClients.get(client_id);
+  if (!client) {
+    return res.status(400).json({
+      error: "invalid_client",
+      error_description: "Unknown client_id. Register via /oauth/register first."
+    });
+  }
+  if (!redirect_uri || !client.redirect_uris.includes(redirect_uri)) {
+    return res.status(400).json({
+      error: "invalid_request",
+      error_description: "redirect_uri does not match a redirect_uri registered for this client."
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Resource Indicator (RFC 8707): the client must state which protected
+  // resource it intends to use the token with. This value is carried
+  // through to /oauth/token and embedded as the JWT `aud` claim, so that
+  // resource servers can verify a token was actually issued for them
+  // instead of accepting any token signed by this AS.
+  // ---------------------------------------------------------------------
+  if (!resource) {
+    return res.status(400).json({
+      error: "invalid_target",
+      error_description: "resource parameter is required to bind the issued token to a specific protected resource."
+    });
+  }
+  try {
+    new URL(resource);
+  } catch {
+    return res.status(400).json({
+      error: "invalid_target",
+      error_description: "resource must be a valid absolute URI."
+    });
+  }
 
   if (!req.session || !req.session.isLoggedIn) {
-    req.session.returnTo = req.originalUrl; 
+    req.session.returnTo = req.originalUrl;
     return req.session.save((err) => {
       if (err) console.error(`[BACKEND AUTHORIZE ERROR] Session save failed:`, err);
       res.redirect("/");
@@ -275,6 +321,7 @@ app.get("/oauth/authorize", (req, res) => {
     clientId: client_id,
     redirectUri: redirect_uri,
     codeChallenge: code_challenge,
+    resource,
     username: req.session.username,
     expiresAt: Date.now() + 10 * 60 * 1000
   });
@@ -283,10 +330,10 @@ app.get("/oauth/authorize", (req, res) => {
     const redirectUrl = new URL(redirect_uri);
     redirectUrl.searchParams.set("code", mockAuthCode);
     if (state) redirectUrl.searchParams.set("state", state);
-    
+
     const hostUrl = `${req.protocol}://${req.get("host")}`;
     redirectUrl.searchParams.set("iss", hostUrl);
-    
+
     return res.redirect(redirectUrl.toString());
   }
 
@@ -294,7 +341,7 @@ app.get("/oauth/authorize", (req, res) => {
 });
 
 app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
-  const { code, grant_type, code_verifier, client_id } = req.body;
+  const { code, grant_type, code_verifier, client_id, resource } = req.body;
 
   if (grant_type !== "authorization_code" || !code || !code_verifier) {
     return res.status(400).json({ error: "invalid_request", error_description: "Missing code or code_verifier" });
@@ -308,6 +355,29 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
 
   authorizationCodes.delete(code);
 
+  // ---------------------------------------------------------------------
+  // If a client_id is supplied in the token request, it must match the
+  // client the code was actually issued to at /oauth/authorize. Previously
+  // a client-supplied client_id would silently override the bound one when
+  // signing the token, breaking the binding between code and client.
+  // ---------------------------------------------------------------------
+  if (client_id && client_id !== authData.clientId) {
+    return res.status(400).json({
+      error: "invalid_grant",
+      error_description: "client_id does not match the client this authorization code was issued to."
+    });
+  }
+
+  // If a resource is supplied here, it must match what was requested at
+  // /oauth/authorize (RFC 8707 §2) — a client can't authorize for one
+  // resource and redeem the code for a token scoped to a different one.
+  if (resource && resource !== authData.resource) {
+    return res.status(400).json({
+      error: "invalid_target",
+      error_description: "resource does not match the resource requested during authorization."
+    });
+  }
+
   // PKCE Validation
   const calculatedChallenge = crypto
     .createHash("sha256")
@@ -318,12 +388,13 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
     return res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" });
   }
 
-  // Issue Signed RS256 JWT
+  // Issue Signed RS256 JWT, bound to the client and resource captured at
+  // authorize-time (never from request-body input at this point).
   const hostUrl = `${req.protocol}://${req.get("host")}`;
   const accessToken = jwt.sign(
     {
       sub: authData.username,
-      client_id: client_id || authData.clientId,
+      client_id: authData.clientId,
       scope: "read write"
     },
     privateKey,
@@ -331,6 +402,7 @@ app.post("/oauth/token", express.urlencoded({ extended: true }), (req, res) => {
       algorithm: "RS256",
       expiresIn: "1h",
       issuer: hostUrl,
+      audience: authData.resource,
       keyid: "prototype-key-1"
     }
   );
